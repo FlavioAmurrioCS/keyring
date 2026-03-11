@@ -5,6 +5,7 @@ import warnings
 
 from ...backend import KeyringBackend
 from ...compat import properties
+from ...credentials import SimpleCredential
 from ...errors import KeyringError, KeyringLocked, PasswordDeleteError, PasswordSetError
 
 try:
@@ -65,6 +66,24 @@ class Keyring(KeyringBackend):
             raise KeyringLocked(f"Can't get password from keychain: {e}") from e
         except api.Error as e:
             raise KeyringError(f"Can't get password from keychain: {e}") from e
+
+    @warn_keychain
+    def get_credential(self, service, username):
+        if username is not None:
+            password = self.get_password(service, username)
+            if password is not None:
+                return SimpleCredential(username, password)
+            return None
+
+        try:
+            found_user, password = api.find_generic_credential(self.keychain, service)
+            return SimpleCredential(found_user, password)
+        except api.NotFound:
+            return None
+        except api.KeychainDenied as e:
+            raise KeyringLocked(f"Can't get credential from keychain: {e}") from e
+        except api.Error as e:
+            raise KeyringError(f"Can't get credential from keychain: {e}") from e
 
     @warn_keychain
     def delete_password(self, service, username):
