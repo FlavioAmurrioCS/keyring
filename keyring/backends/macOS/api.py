@@ -65,6 +65,18 @@ CFDataGetLength = _found.CFDataGetLength
 CFDataGetLength.restype = c_int32
 CFDataGetLength.argtypes = (c_void_p,)
 
+CFDictionaryGetValue = _found.CFDictionaryGetValue
+CFDictionaryGetValue.restype = c_void_p
+CFDictionaryGetValue.argtypes = (c_void_p, c_void_p)
+
+CFStringGetCStringPtr = _found.CFStringGetCStringPtr
+CFStringGetCStringPtr.restype = ctypes.c_char_p
+CFStringGetCStringPtr.argtypes = (c_void_p, c_uint32)
+
+CFStringGetCString = _found.CFStringGetCString
+CFStringGetCString.restype = ctypes.c_bool
+CFStringGetCString.argtypes = (c_void_p, ctypes.c_char_p, c_int32, c_uint32)
+
 
 def k_(s):
     return c_void_p.in_dll(_sec, s)
@@ -106,6 +118,19 @@ def cfstr_to_str(data):
     return ctypes.string_at(CFDataGetBytePtr(data), CFDataGetLength(data)).decode(
         'utf-8'
     )
+
+
+def _cfstr_to_python_str(cf_string):
+    """Convert a CFStringRef to a Python str."""
+    kCFStringEncodingUTF8 = 0x08000100
+    result = CFStringGetCStringPtr(cf_string, kCFStringEncodingUTF8)
+    if result is not None:
+        return result.decode('utf-8')
+    buf = ctypes.create_string_buffer(1024)
+    if CFStringGetCString(cf_string, buf, 1024, kCFStringEncodingUTF8):
+        return buf.value.decode('utf-8')
+    msg = "Failed to convert CFString to Python string"
+    raise Error(msg)
 
 
 class Error(Exception):
@@ -156,6 +181,33 @@ def find_generic_password(kc_name, service, username, not_found_ok=False):
     Error.raise_for_status(status)
 
     return cfstr_to_str(data)
+
+
+def find_generic_credential(kc_name, service):
+    """Find a generic password by service name, returning (username, password).
+
+    Unlike find_generic_password, this does not require a username and
+    returns both the account name and password.
+    """
+    q = create_query(
+        kSecClass=k_('kSecClassGenericPassword'),
+        kSecMatchLimit=k_('kSecMatchLimitOne'),
+        kSecAttrService=service,
+        kSecReturnData=True,
+        kSecReturnAttributes=True,
+    )
+
+    result = c_void_p()
+    status = SecItemCopyMatching(q, byref(result))
+    Error.raise_for_status(status)
+
+    account_cf = CFDictionaryGetValue(result, k_('kSecAttrAccount'))
+    username = _cfstr_to_python_str(account_cf) if account_cf else ''
+
+    data_cf = CFDictionaryGetValue(result, k_('kSecValueData'))
+    password = cfstr_to_str(data_cf) if data_cf else ''
+
+    return username, password
 
 
 def set_generic_password(name, service, username, password):
